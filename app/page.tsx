@@ -7,6 +7,222 @@ import {
 } from 'lucide-react';
 
 // ===============================================
+// 🌌 AURORA BACKGROUND COMPONENT
+// ===============================================
+
+import { Renderer, Program, Mesh, Color, Triangle } from "ogl";
+
+const VERT = `#version 300 es
+in vec2 position;
+void main() {
+  gl_Position = vec4(position, 0.0, 1.0);
+}
+`;
+
+const FRAG = `#version 300 es
+precision highp float;
+
+uniform float uTime;
+uniform float uAmplitude;
+uniform vec3 uColorStops[3];
+uniform vec2 uResolution;
+uniform float uBlend;
+
+out vec4 fragColor;
+
+vec3 permute(vec3 x) {
+  return mod(((x * 34.0) + 1.0) * x, 289.0);
+}
+
+float snoise(vec2 v){
+  const vec4 C = vec4(
+      0.211324865405187, 0.366025403784439,
+      -0.577350269189626, 0.024390243902439
+  );
+  vec2 i  = floor(v + dot(v, C.yy));
+  vec2 x0 = v - i + dot(i, C.xx);
+  vec2 i1 = (x0.x > x0.y) ? vec2(1.0, 0.0) : vec2(0.0, 1.0);
+  vec4 x12 = x0.xyxy + C.xxzz;
+  x12.xy -= i1;
+  i = mod(i, 289.0);
+
+  vec3 p = permute(
+      permute(i.y + vec3(0.0, i1.y, 1.0))
+    + i.x + vec3(0.0, i1.x, 1.0)
+  );
+
+  vec3 m = max(
+      0.5 - vec3(
+          dot(x0, x0),
+          dot(x12.xy, x12.xy),
+          dot(x12.zw, x12.zw)
+      ), 
+      0.0
+  );
+  m = m * m;
+  m = m * m;
+
+  vec3 x = 2.0 * fract(p * C.www) - 1.0;
+  vec3 h = abs(x) - 0.5;
+  vec3 ox = floor(x + 0.5);
+  vec3 a0 = x - ox;
+  m *= 1.79284291400159 - 0.85373472095314 * (a0*a0 + h*h);
+
+  vec3 g;
+  g.x  = a0.x  * x0.x  + h.x  * x0.y;
+  g.yz = a0.yz * x12.xz + h.yz * x12.yw;
+  return 130.0 * dot(m, g);
+}
+
+struct ColorStop {
+  vec3 color;
+  float position;
+};
+
+#define COLOR_RAMP(colors, factor, finalColor) {              \
+  int index = 0;                                            \
+  for (int i = 0; i < 2; i++) {                               \
+     ColorStop currentColor = colors[i];                    \
+     bool isInBetween = currentColor.position <= factor;    \
+     index = int(mix(float(index), float(i), float(isInBetween))); \
+  }                                                         \
+  ColorStop currentColor = colors[index];                   \
+  ColorStop nextColor = colors[index + 1];                  \
+  float range = nextColor.position - currentColor.position; \
+  float lerpFactor = (factor - currentColor.position) / range; \
+  finalColor = mix(currentColor.color, nextColor.color, lerpFactor); \
+}
+
+void main() {
+  vec2 uv = gl_FragCoord.xy / uResolution;
+  
+  ColorStop colors[3];
+  colors[0] = ColorStop(uColorStops[0], 0.0);
+  colors[1] = ColorStop(uColorStops[1], 0.5);
+  colors[2] = ColorStop(uColorStops[2], 1.0);
+  
+  vec3 rampColor;
+  COLOR_RAMP(colors, uv.x, rampColor);
+  
+  float height = snoise(vec2(uv.x * 2.0 + uTime * 0.1, uTime * 0.25)) * 0.5 * uAmplitude;
+  height = exp(height);
+  height = (uv.y * 2.0 - height + 0.2);
+  float intensity = 0.6 * height;
+  
+  float midPoint = 0.20;
+  float auroraAlpha = smoothstep(midPoint - uBlend * 0.5, midPoint + uBlend * 0.5, intensity);
+  
+  vec3 auroraColor = intensity * rampColor;
+  
+  fragColor = vec4(auroraColor * auroraAlpha, auroraAlpha);
+}
+`;
+
+interface AuroraProps {
+  colorStops?: string[];
+  amplitude?: number;
+  blend?: number;
+  speed?: number;
+  className?: string;
+}
+
+const Aurora = memo<AuroraProps>(({
+  colorStops = ["#3A29FF", "#FF94B4", "#FF3232"],
+  amplitude = 1.0,
+  blend = 0.5,
+  speed = 0.5,
+  className = "w-full h-full"
+}) => {
+  const ctnDom = useRef<HTMLDivElement>(null);
+  const propsRef = useRef({ colorStops, amplitude, blend, speed });
+  propsRef.current = { colorStops, amplitude, blend, speed };
+
+  useEffect(() => {
+    const ctn = ctnDom.current;
+    if (!ctn) return;
+
+    const renderer = new Renderer({
+      alpha: true,
+      premultipliedAlpha: true,
+      antialias: true
+    });
+    const gl = renderer.gl;
+    gl.clearColor(0, 0, 0, 0);
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+    gl.canvas.style.backgroundColor = 'transparent';
+
+    let program: Program;
+
+    function resize() {
+      if (!ctn) return;
+      const width = ctn.offsetWidth;
+      const height = ctn.offsetHeight;
+      renderer.setSize(width, height);
+      if (program) {
+        program.uniforms.uResolution.value = [width, height];
+      }
+    }
+    window.addEventListener("resize", resize);
+
+    const geometry = new Triangle(gl);
+    if (geometry.attributes.uv) {
+      delete geometry.attributes.uv;
+    }
+
+    const colorStopsArray = colorStops.map((hex) => {
+      const c = new Color(hex);
+      return [c.r, c.g, c.b];
+    });
+
+    program = new Program(gl, {
+      vertex: VERT,
+      fragment: FRAG,
+      uniforms: {
+        uTime: { value: 0 },
+        uAmplitude: { value: amplitude },
+        uColorStops: { value: colorStopsArray },
+        uResolution: { value: [ctn.offsetWidth, ctn.offsetHeight] },
+        uBlend: { value: blend }
+      }
+    });
+
+    const mesh = new Mesh(gl, { geometry, program });
+    ctn.appendChild(gl.canvas);
+
+    let animateId = 0;
+    const update = (t: number) => {
+      animateId = requestAnimationFrame(update);
+      const currentProps = propsRef.current;
+      program.uniforms.uTime.value = t * currentProps.speed * 0.0001;
+      program.uniforms.uAmplitude.value = currentProps.amplitude;
+      program.uniforms.uBlend.value = blend;
+      program.uniforms.uColorStops.value = currentProps.colorStops.map((hex) => {
+        const c = new Color(hex);
+        return [c.r, c.g, c.b];
+      });
+      renderer.render({ scene: mesh });
+    };
+    animateId = requestAnimationFrame(update);
+
+    resize();
+
+    return () => {
+      cancelAnimationFrame(animateId);
+      window.removeEventListener("resize", resize);
+      if (ctn && gl.canvas.parentNode === ctn) {
+        ctn.removeChild(gl.canvas);
+      }
+      gl.getExtension("WEBGL_lose_context")?.loseContext();
+    };
+  }, [amplitude, blend, speed]);
+
+  return <div ref={ctnDom} className={className} />;
+});
+
+Aurora.displayName = 'Aurora';
+
+// ===============================================
 // 🚀 PERFORMANCE OPTIMIZED COMPONENTS
 // ===============================================
 
@@ -51,11 +267,11 @@ const AnimatedText = memo<AnimatedTextProps>(({ children, delay = 0, className =
 
 AnimatedText.displayName = 'AnimatedText';
 
-// Client-only Floating Elements to prevent hydration errors
+// Client-only Floating Elements for Services section
 const FloatingElements = memo(() => {
   const [isMounted, setIsMounted] = useState(false);
   const [elements] = useState(() => 
-    Array.from({ length: 15 }, (_, i) => ({
+    Array.from({ length: 8 }, (_, i) => ({
       id: i,
       left: Math.random() * 100,
       top: Math.random() * 100,
@@ -69,7 +285,7 @@ const FloatingElements = memo(() => {
   }, []);
 
   if (!isMounted) {
-    return null; // Don't render on server
+    return null;
   }
 
   return (
@@ -127,32 +343,6 @@ const ServiceCard = memo<ServiceCardProps>(({ icon, title, description, color, b
 });
 
 ServiceCard.displayName = 'ServiceCard';
-
-// ===============================================
-// 📊 TRUST INDICATOR COMPONENT
-// ===============================================
-
-interface TrustIndicatorProps {
-  value: string;
-  label: string;
-  color: string;
-  icon: ReactNode;
-  index: number;
-}
-
-const TrustIndicator = memo<TrustIndicatorProps>(({ value, label, color, icon, index }) => {
-  return (
-    <div className="group p-6 bg-white/40 backdrop-blur-sm rounded-2xl border border-white/50 hover:bg-white/60 hover:shadow-xl transition-all duration-300 hover:-translate-y-1 will-change-transform">
-      <div className={`${color} mb-3 group-hover:scale-110 transition-transform duration-300 will-change-transform`}>
-        {icon}
-      </div>
-      <div className={`text-4xl font-bold ${color} mb-2`}>{value}</div>
-      <div className="text-gray-600 font-medium">{label}</div>
-    </div>
-  );
-});
-
-TrustIndicator.displayName = 'TrustIndicator';
 
 // ===============================================
 // 🎯 MAIN HOMEPAGE COMPONENT
@@ -298,9 +488,6 @@ export default function HomePage() {
         className="fixed inset-0 pointer-events-none z-0 will-change-auto" 
         style={cursorGradient.current} 
       />
-      
-      {/* Floating Elements */}
-      <FloatingElements />
 
       {/* Navigation */}
       <nav className="fixed w-full bg-white/80 backdrop-blur-md border-b border-gray-200/50 z-50 transition-all duration-300">
@@ -322,9 +509,6 @@ export default function HomePage() {
                   About
                   <span className="absolute bottom-0 left-0 w-full h-0.5 bg-gradient-to-r from-blue-600 to-purple-600 transform scale-x-0 group-hover:scale-x-100 transition-transform duration-300 will-change-transform"></span>
                 </a>
-                <button className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white px-6 py-2.5 rounded-full text-sm font-medium transition-all duration-300 transform hover:scale-105 shadow-lg hover:shadow-xl will-change-transform">
-                  Start Project
-                </button>
               </div>
             </div>
 
@@ -349,31 +533,44 @@ export default function HomePage() {
         </div>
       </nav>
 
-      {/* Enhanced Hero Section */}
-      <section className="relative pt-24 pb-20 px-4 sm:px-6 lg:px-8 min-h-screen flex items-center">
-        <div className="max-w-7xl mx-auto w-full">
-          <div className="text-center relative z-10">
+      {/* Enhanced Hero Section with Aurora Background */}
+      <section className="relative pt-24 pb-20 px-4 sm:px-6 lg:px-8 min-h-screen flex items-center overflow-hidden">
+        {/* Aurora Background */}
+        <div className="absolute inset-0 z-0">
+          <Aurora
+            colorStops={["#3B82F6", "#8B5CF6", "#06B6D4"]} // Blue to Purple to Cyan (AllDazeWork brand colors)
+            amplitude={1.2}
+            blend={0.4}
+            speed={0.3}
+            className="w-full h-full opacity-40"
+          />
+        </div>
+
+        {/* Background Overlay for better text readability */}
+        {/* <div className="absolute inset-0 bg-gradient-to-br from-slate-50/80 via-white/60 to-blue-50/80 z-10"></div> */}
+
+        <div className="max-w-7xl mx-auto w-full relative z-20">
+          <div className="text-center">
             <AnimatedText delay={200}>
-              <div className="inline-flex items-center px-6 py-3 bg-gradient-to-r from-blue-50 to-purple-50 rounded-full text-blue-700 text-sm font-medium mb-8 border border-blue-200/50 backdrop-blur-sm">
+              <div className="inline-flex items-center px-6 py-3 bg-white/80 backdrop-blur-sm rounded-full text-blue-700 text-sm font-medium mb-8 border border-blue-200/50 shadow-lg">
                 <Sparkles className="h-4 w-4 mr-2 animate-pulse" />
                 Design Duo Excellence
               </div>
             </AnimatedText>
 
             <AnimatedText delay={400}>
-              <h1 className="text-5xl md:text-7xl font-bold text-gray-900 mb-6 leading-tight">
+              <h1 className="text-5xl md:text-7xl font-bold text-gray-900 mb-6 leading-tight drop-shadow-sm">
                 We transform ideas into{' '}
                 <span className="relative">
-                  <span className="bg-gradient-to-r from-blue-600 via-purple-600 to-cyan-600 bg-clip-text text-transparent animate-pulse">
+                  <span className="bg-gradient-to-r from-blue-600 via-purple-600 to-cyan-600 bg-clip-text text-transparent">
                     winning experiences
                   </span>
-                  <div className="absolute -inset-1 bg-gradient-to-r from-blue-600/20 via-purple-600/20 to-cyan-600/20 rounded-lg blur-lg animate-pulse"></div>
                 </span>
               </h1>
             </AnimatedText>
 
             <AnimatedText delay={600}>
-              <p className="text-xl md:text-2xl text-gray-600 mb-12 max-w-4xl mx-auto leading-relaxed">
+              <p className="text-xl md:text-2xl text-gray-700 mb-12 max-w-4xl mx-auto leading-relaxed drop-shadow-sm">
                 As a collaborative design duo, we bring <strong>double the creative power</strong> to your biggest challenges—from 
                 blue sky visioning to scalable product experiences that drive real business growth.
               </p>
@@ -388,7 +585,7 @@ export default function HomePage() {
                   </span>
                   <div className="absolute inset-0 bg-gradient-to-r from-white/0 via-white/20 to-white/0 transform -skew-x-12 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-700 will-change-transform"></div>
                 </button>
-                <button className="border-2 border-gray-300 hover:border-gray-400 text-gray-700 hover:bg-gray-50 px-10 py-5 rounded-full text-lg font-semibold transition-all duration-300 hover:shadow-lg flex items-center justify-center group">
+                <button className="border-2 border-gray-300 hover:border-gray-400 text-gray-700 hover:bg-white/80 backdrop-blur-sm px-10 py-5 rounded-full text-lg font-semibold transition-all duration-300 hover:shadow-lg flex items-center justify-center group">
                   <Play className="mr-3 h-5 w-5 group-hover:scale-110 transition-transform duration-300 will-change-transform" />
                   Watch Our Process
                 </button>
@@ -399,35 +596,38 @@ export default function HomePage() {
             <AnimatedText delay={1000}>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-8 text-center">
                 {trustIndicators.map((stat, index) => (
-                  <TrustIndicator
-                    key={index}
-                    value={stat.value}
-                    label={stat.label}
-                    color={stat.color}
-                    icon={stat.icon}
-                    index={index}
-                  />
+                  <div key={index} className="group p-6 bg-white/60 backdrop-blur-sm rounded-2xl border border-white/50 hover:bg-white/80 hover:shadow-xl transition-all duration-300 hover:-translate-y-1 will-change-transform">
+                    <div className={`${stat.color} mb-3 group-hover:scale-110 transition-transform duration-300 will-change-transform`}>
+                      {stat.icon}
+                    </div>
+                    <div className={`text-4xl font-bold ${stat.color} mb-2`}>{stat.value}</div>
+                    <div className="text-gray-600 font-medium">{stat.label}</div>
+                  </div>
                 ))}
               </div>
             </AnimatedText>
 
             {/* Scroll Indicator */}
             <div className="absolute bottom-10 left-1/2 transform -translate-x-1/2 animate-bounce">
-              <ChevronDown className="h-8 w-8 text-gray-400" />
+              <ChevronDown className="h-8 w-8 text-gray-500" />
             </div>
           </div>
         </div>
 
-        {/* Parallax Background Elements */}
-        <div className="absolute inset-0 overflow-hidden">
-          <div 
-            className="absolute top-20 right-20 w-72 h-72 bg-gradient-to-br from-blue-400/10 to-purple-400/10 rounded-full blur-3xl will-change-transform"
-            style={{ transform: `translateY(${scrollY * 0.1}px)` }}
-          />
-          <div 
-            className="absolute bottom-20 left-20 w-96 h-96 bg-gradient-to-br from-purple-400/10 to-cyan-400/10 rounded-full blur-3xl will-change-transform"
-            style={{ transform: `translateY(${scrollY * -0.05}px)` }}
-          />
+        {/* Additional Floating Elements for depth */}
+        <div className="absolute inset-0 overflow-hidden pointer-events-none z-15">
+          {Array.from({ length: 8 }, (_, i) => (
+            <div
+              key={i}
+              className="absolute w-1 h-1 bg-white/30 rounded-full animate-pulse will-change-transform"
+              style={{
+                left: `${Math.random() * 100}%`,
+                top: `${Math.random() * 100}%`,
+                animationDelay: `${Math.random() * 3}s`,
+                animationDuration: `${3 + Math.random() * 2}s`
+              }}
+            />
+          ))}
         </div>
       </section>
 
@@ -435,7 +635,8 @@ export default function HomePage() {
       {/* 🛠️ SERVICES SECTION */}
       {/* =============================================== */}
       <section id="services" className="py-24 bg-gradient-to-b from-white to-gray-50 relative">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <FloatingElements />
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10">
           <AnimatedText>
             <div className="text-center mb-20">
               <h2 className="text-4xl md:text-5xl font-bold text-gray-900 mb-6">
