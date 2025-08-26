@@ -8,18 +8,18 @@ export default function Hero() {
         <div className="text-left mt-24">
         <div>
             <img src="/images/eagle.svg" alt="Alldaze Work" className="w-[10%] pb-2" />
-            <span className="text-lg">Human-Centered Design. Studio-Crafted Clarity.</span>
+            <h3 className="text-lg">Human-Centered Design. Studio-Crafted Clarity.</h3>
         </div>
           
 
-          <h1 className="text-3xl md:text-4xl font-bold text-gray-900 mb-1 mt-8 leading-tight">
+          <h1 className="text-2xl md:text-3xl font-bold text-gray-900 mb-1 mt-8 leading-tight">
             We transform ideas into{' '}
             <span className="bg-gradient-to-r from-orange-600 via-yellow-600 to-cyan-600 bg-clip-text text-transparent">
               winning experiences
             </span>
           </h1>
 
-          <p className="text-xl md:text-2xl text-gray-700 mb-12 max-w-4xl leading-relaxed">
+          <p className="text-lg md:text-xl text-gray-700 mb-12 max-w-2xl leading-relaxed">
             A collaborative design duo blending research, systems, and taste. We bring double the creative power to your biggest challenges.
           </p>
           
