@@ -12,11 +12,13 @@ export default function HomePage() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-blue-50">
       <Navigation />
-      <Hero />
-      <Services />
-      <AssessmentCTA />
-      <About />
-      <Footer />
+      <section
+        id="hero"
+        className="relative scroll-mt-20 transition-colors duration-700 ease-in-out"
+      >
+        <Hero />
+        <Services />
+      </section>
     </div>
   );
 }
